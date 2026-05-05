@@ -74,6 +74,7 @@ def analiz_motoru():
             R1x = -np.sum(px)
             M_ext = 0
 
+        # Diyagram Hesapları
         for i, xi in enumerate(x):
             if xi >= m_pos[0]: N[i] += R1x
             if xi >= m_pos[0]: V[i] += R1y
@@ -91,7 +92,7 @@ def analiz_motoru():
             M[x >= m_k] += m_v
 
         # --- GÖRSELLEŞTİRME ---
-        fig, axes = plt.subplots(4, 1, figsize=(10, 16))
+        fig, axes = plt.subplots(4, 1, figsize=(10, 18))
         
         # 1. Sistem Şeması
         axes[0].hlines(0, 0, L, color='black', lw=6)
@@ -99,18 +100,11 @@ def analiz_motoru():
             if t == 1: axes[0].plot(p, -0.2, '^', ms=20, color='gray')
             if t == 2: axes[0].plot(p, -0.2, 'o', ms=15, color='gray')
             if t == 3: axes[0].vlines(p, -0.5, 0.5, color='black', lw=10)
-        
-        for i in range(len(ps)):
-            axes[0].annotate(f'{ps[i]}kN', xy=(pk[i], 0), xytext=(pk[i], 1),
-                             arrowprops=dict(facecolor='red', width=2), ha='center', color='red')
-        
-        for k in range(len(ws)):
-            rect = plt.Rectangle((wb[k], 0), we[k]-wb[k], 0.4, color='orange', alpha=0.3)
-            axes[0].add_patch(rect)
-
         axes[0].set_ylim(-1.5, 2.5); axes[0].axis('off')
 
-        # 2, 3, 4. Diyagramlar ve Maksimum Noktalar
+        # Kritik Noktaların Belirlenmesi (Değer yazılacak noktalar)
+        kritik_x = np.unique(np.concatenate(([0, L], m_pos, pk, wb, we, mk_pos)))
+
         titles = ["N (kN)", "V (kN)", "M (kNm)"]
         colors = ['green', 'blue', 'red']
         data_list = [N, V, M]
@@ -119,26 +113,29 @@ def analiz_motoru():
             ax.plot(x, d, color=c, lw=2)
             ax.fill_between(x, d, color=c, alpha=0.1)
             ax.set_ylabel(t); ax.grid(True, alpha=0.3); ax.axhline(0, color='black')
-            
             if t == "M (kNm)": ax.invert_yaxis()
 
-            # Maksimum Nokta Bulma (Mutlak Değerce)
-            abs_d = np.abs(d)
-            idx_max = np.argmax(abs_d)
-            x_max = x[idx_max]
-            y_max = d[idx_max]
-
-            # Marker ve Etiket Ekleme
-            ax.plot(x_max, y_max, 'ko', ms=6) # Siyah nokta
-            ax.annotate(f'max: {y_max:.2f}', xy=(x_max, y_max), 
-                        xytext=(x_max, y_max + (np.max(abs_d)*0.1 if t != "M (kNm)" else -np.max(abs_d)*0.1)),
-                        ha='center', fontweight='bold', color='black',
-                        bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.8))
+            # Grafik üzerine değerlerin yazılması
+            for kx in kritik_x:
+                if kx > L: continue
+                # x değerine en yakın indexi bul
+                idx = np.argmin(np.abs(x - kx))
+                val = d[idx]
+                
+                # Değer 0'dan anlamlı derecede farklıysa yaz (veya sınır noktasıysa)
+                if abs(val) > 1e-2 or kx in [0, L]:
+                    offset = np.max(np.abs(d)) * 0.1
+                    if t == "M (kNm)": offset *= -1 # Moment ekseni ters olduğu için
+                    
+                    ax.text(kx, val + offset, f'{val:.1f}', 
+                            ha='center', fontsize=9, fontweight='bold',
+                            bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=1))
+                    ax.plot(kx, val, 'o', color=c, ms=4)
 
         st.pyplot(fig)
         st.info(f"Reaksiyonlar: R1y={R1y:.2f}kN, R2y={R2y:.2f}kN, R1x={R1x:.2f}kN")
 
     except Exception as e:
-        st.warning(f"Hata: {e}")
+        st.warning(f"Hata oluştu: {e}")
 
 analiz_motoru()
