@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -94,17 +94,42 @@ def analiz_motoru():
         # --- GÖRSELLEŞTİRME ---
         fig, axes = plt.subplots(4, 1, figsize=(10, 18))
         
-        # 1. Sistem Şeması
+        # 1. SİSTEM ŞEMASI (TÜM YÜKLER DAHİL)
         axes[0].hlines(0, 0, L, color='black', lw=6)
+        
+        # Mesnetler
         for p, t in zip(m_pos, m_type):
-            if t == 1: axes[0].plot(p, -0.2, '^', ms=20, color='gray')
-            if t == 2: axes[0].plot(p, -0.2, 'o', ms=15, color='gray')
-            if t == 3: axes[0].vlines(p, -0.5, 0.5, color='black', lw=10)
-        axes[0].set_ylim(-1.5, 2.5); axes[0].axis('off')
+            if t == 1: axes[0].plot(p, -0.2, '^', ms=20, color='gray', label="Sabit")
+            if t == 2: axes[0].plot(p, -0.2, 'o', ms=15, color='gray', label="Hark.")
+            if t == 3: axes[0].vlines(p, -0.6, 0.6, color='black', lw=10, label="Ank.")
+        
+        # Tekil Yük Okları (Kırmızı)
+        for i in range(len(ps)):
+            # Açıya göre ok yönü
+            dx = 0.8 * np.cos(np.deg2rad(pa[i] + 180))
+            dy = 0.8 * np.sin(np.deg2rad(pa[i] + 180))
+            axes[0].annotate(f'{ps[i]}kN', xy=(pk[i], 0), xytext=(pk[i]-dx, -dy),
+                             arrowprops=dict(facecolor='red', width=2, headwidth=8),
+                             ha='center', color='red', fontweight='bold')
+        
+        # Yayılı Yük Alanları (Turuncu)
+        for k in range(len(ws)):
+            rect = plt.Rectangle((wb[k], 0), we[k]-wb[k], 0.5, color='orange', alpha=0.3)
+            axes[0].add_patch(rect)
+            axes[0].text((wb[k]+we[k])/2, 0.6, f'{ws[k]}kN/m', color='orange', ha='center', weight='bold')
 
-        # Kritik Noktaların Belirlenmesi (Değer yazılacak noktalar)
+        # Tekil Momentler (Mor)
+        for mv, mk in zip(ms_val, mk_pos):
+            axes[0].plot(mk, 0.3, 'o', mfc='none', mec='purple', ms=20, mew=2)
+            axes[0].text(mk, 0.7, f'{mv}kNm', color='purple', ha='center', fontweight='bold')
+
+        axes[0].set_ylim(-1.5, 3); axes[0].axis('off')
+        axes[0].set_title("Sistem ve Yükleme Modeli", fontweight='bold')
+
+        # Kritik Noktalar
         kritik_x = np.unique(np.concatenate(([0, L], m_pos, pk, wb, we, mk_pos)))
 
+        # Diyagramlar
         titles = ["N (kN)", "V (kN)", "M (kNm)"]
         colors = ['green', 'blue', 'red']
         data_list = [N, V, M]
@@ -115,27 +140,21 @@ def analiz_motoru():
             ax.set_ylabel(t); ax.grid(True, alpha=0.3); ax.axhline(0, color='black')
             if t == "M (kNm)": ax.invert_yaxis()
 
-            # Grafik üzerine değerlerin yazılması
             for kx in kritik_x:
                 if kx > L: continue
-                # x değerine en yakın indexi bul
                 idx = np.argmin(np.abs(x - kx))
                 val = d[idx]
-                
-                # Değer 0'dan anlamlı derecede farklıysa yaz (veya sınır noktasıysa)
                 if abs(val) > 1e-2 or kx in [0, L]:
-                    offset = np.max(np.abs(d)) * 0.1
-                    if t == "M (kNm)": offset *= -1 # Moment ekseni ters olduğu için
-                    
-                    ax.text(kx, val + offset, f'{val:.1f}', 
-                            ha='center', fontsize=9, fontweight='bold',
-                            bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=1))
+                    offset = np.max(np.abs(d)) * 0.12 if np.max(np.abs(d)) > 0 else 0.1
+                    if t == "M (kNm)": offset *= -1
+                    ax.text(kx, val + offset, f'{val:.1f}', ha='center', fontsize=9, fontweight='bold',
+                            bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=1))
                     ax.plot(kx, val, 'o', color=c, ms=4)
 
         st.pyplot(fig)
         st.info(f"Reaksiyonlar: R1y={R1y:.2f}kN, R2y={R2y:.2f}kN, R1x={R1x:.2f}kN")
 
     except Exception as e:
-        st.warning(f"Hata oluştu: {e}")
+        st.warning(f"Lütfen giriş verilerini kontrol edin. Hata: {e}")
 
 analiz_motoru()
