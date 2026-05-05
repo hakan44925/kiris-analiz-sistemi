@@ -91,46 +91,54 @@ def analiz_motoru():
             M[x >= m_k] += m_v
 
         # --- GÖRSELLEŞTİRME ---
-        fig, axes = plt.subplots(4, 1, figsize=(10, 14))
+        fig, axes = plt.subplots(4, 1, figsize=(10, 16))
         
-        # 1. Sistem Şeması (Düzeltilmiş)
+        # 1. Sistem Şeması
         axes[0].hlines(0, 0, L, color='black', lw=6)
-        # Mesnetler
         for p, t in zip(m_pos, m_type):
             if t == 1: axes[0].plot(p, -0.2, '^', ms=20, color='gray')
             if t == 2: axes[0].plot(p, -0.2, 'o', ms=15, color='gray')
             if t == 3: axes[0].vlines(p, -0.5, 0.5, color='black', lw=10)
         
-        # Tekil Yükler
         for i in range(len(ps)):
-            dx = 0.7 * np.cos(np.deg2rad(pa[i] + 180))
-            dy = 0.7 * np.sin(np.deg2rad(pa[i] + 180))
-            axes[0].annotate(f'{ps[i]}kN', xy=(pk[i], 0), xytext=(pk[i]-dx, -dy),
+            axes[0].annotate(f'{ps[i]}kN', xy=(pk[i], 0), xytext=(pk[i], 1),
                              arrowprops=dict(facecolor='red', width=2), ha='center', color='red')
         
-        # Yayılı Yükler
         for k in range(len(ws)):
             rect = plt.Rectangle((wb[k], 0), we[k]-wb[k], 0.4, color='orange', alpha=0.3)
             axes[0].add_patch(rect)
-            axes[0].text((wb[k]+we[k])/2, 0.5, f'{ws[k]}kN/m', color='orange', ha='center')
-
-        # Tekil Momentler
-        for mv, mk in zip(ms_val, mk_pos):
-            axes[0].plot(mk, 0.3, 'o', mfc='none', mec='purple', ms=15)
-            axes[0].text(mk, 0.6, f'{mv}kNm', color='purple', ha='center')
 
         axes[0].set_ylim(-1.5, 2.5); axes[0].axis('off')
 
-        # Diyagramlar
-        axes[1].plot(x, N, 'g'); axes[1].set_ylabel("N (kN)")
-        axes[2].plot(x, V, 'b'); axes[2].set_ylabel("V (kN)")
-        axes[3].plot(x, M, 'r'); axes[3].set_ylabel("M (kNm)"); axes[3].invert_yaxis()
-        for ax in axes[1:]: ax.grid(True, alpha=0.3); ax.axhline(0, color='black')
+        # 2, 3, 4. Diyagramlar ve Maksimum Noktalar
+        titles = ["N (kN)", "V (kN)", "M (kNm)"]
+        colors = ['green', 'blue', 'red']
+        data_list = [N, V, M]
+
+        for i, (ax, t, c, d) in enumerate(zip(axes[1:], titles, colors, data_list)):
+            ax.plot(x, d, color=c, lw=2)
+            ax.fill_between(x, d, color=c, alpha=0.1)
+            ax.set_ylabel(t); ax.grid(True, alpha=0.3); ax.axhline(0, color='black')
+            
+            if t == "M (kNm)": ax.invert_yaxis()
+
+            # Maksimum Nokta Bulma (Mutlak Değerce)
+            abs_d = np.abs(d)
+            idx_max = np.argmax(abs_d)
+            x_max = x[idx_max]
+            y_max = d[idx_max]
+
+            # Marker ve Etiket Ekleme
+            ax.plot(x_max, y_max, 'ko', ms=6) # Siyah nokta
+            ax.annotate(f'max: {y_max:.2f}', xy=(x_max, y_max), 
+                        xytext=(x_max, y_max + (np.max(abs_d)*0.1 if t != "M (kNm)" else -np.max(abs_d)*0.1)),
+                        ha='center', fontweight='bold', color='black',
+                        bbox=dict(boxstyle='round,pad=0.3', fc='white', alpha=0.8))
 
         st.pyplot(fig)
         st.info(f"Reaksiyonlar: R1y={R1y:.2f}kN, R2y={R2y:.2f}kN, R1x={R1x:.2f}kN")
 
-    except:
-        st.warning("Veri girişini kontrol edin.")
+    except Exception as e:
+        st.warning(f"Hata: {e}")
 
 analiz_motoru()
