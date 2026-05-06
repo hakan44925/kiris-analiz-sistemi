@@ -60,6 +60,10 @@ def analiz_motoru():
         wb = parse_input(w_b_raw)
         we = parse_input(w_e_raw)
 
+        # Kritik Noktaları Belirle (Etiketleme için)
+        kritik_x = np.unique(np.concatenate(([0, L], m_pos, mafsallar, pk, mk_pos, wb, we)))
+        kritik_x = np.sort(kritik_x)
+
         # Çözünürlük ve Arrayler
         x = np.linspace(0, L, 2000)
         N, V, M = np.zeros_like(x), np.zeros_like(x), np.zeros_like(x)
@@ -75,13 +79,11 @@ def analiz_motoru():
         A = np.zeros((n_reak, n_reak))
         B = np.zeros(n_reak)
 
-        # 1. Toplam Fy = 0
         A[0, :len(m_pos)] = 1
         total_p_y = np.sum(py)
         total_w_y = np.sum(ws * (we - wb))
         B[0] = total_p_y + total_w_y
 
-        # 2. Toplam M_x=0 = 0
         for i in range(len(m_pos)):
             A[1, i] = m_pos[i]
         if 3 in m_type: 
@@ -93,7 +95,6 @@ def analiz_motoru():
             moment_load += (ws[i] * (we[i] - wb[i])) * ((wb[i] + we[i])/2)
         B[1] = moment_load
 
-        # 3. Mafsal Denklemleri
         for i, maf_x in enumerate(mafsallar):
             if i + 2 >= n_reak: break
             row = i + 2
@@ -115,43 +116,40 @@ def analiz_motoru():
         reaksiyonlar = np.linalg.solve(A, B)
 
         # --- DİYAGRAM HESAPLARI ---
-        for i, xi in enumerate(x):
+        def get_v_m(pos):
             v_val, m_val = 0, 0
             for j in range(len(m_pos)):
-                if xi >= m_pos[j]:
+                if pos >= m_pos[j]:
                     v_val += reaksiyonlar[j]
-                    m_val += reaksiyonlar[j] * (xi - m_pos[j])
-            if 3 in m_type and xi >= m_pos[ank_idx]:
+                    m_val += reaksiyonlar[j] * (pos - m_pos[j])
+            if 3 in m_type and pos >= m_pos[ank_idx]:
                 m_val -= reaksiyonlar[len(m_pos)]
-            
             for j in range(len(ps)):
-                if xi >= pk[j]:
+                if pos >= pk[j]:
                     v_val -= py[j]
-                    m_val -= py[j] * (xi - pk[j])
-            
+                    m_val -= py[j] * (pos - pk[j])
             for k in range(len(ws)):
-                if xi > wb[k]:
-                    active_w_len = min(xi, we[k]) - wb[k]
-                    centroid = wb[k] + active_w_len/2
+                if pos > wb[k]:
+                    active_w_len = min(pos, we[k]) - wb[k]
                     v_val -= ws[k] * active_w_len
-                    m_val -= (ws[k] * active_w_len) * (xi - centroid)
-            
+                    m_val -= (ws[k] * active_w_len) * (pos - (wb[k] + min(pos, we[k]))/2)
             for mv, mk in zip(ms_val, mk_pos):
-                if xi >= mk: m_val += mv
-            
-            V[i], M[i] = v_val, m_val
+                if pos >= mk: m_val += mv
+            return v_val, m_val
+
+        for i, xi in enumerate(x):
+            V[i], M[i] = get_v_m(xi)
 
         # --- GÖRSELLEŞTİRME ---
-        fig, axes = plt.subplots(4, 1, figsize=(11, 14), gridspec_kw={'height_ratios': [1, 1.2, 1.2, 1.2]})
-        plt.subplots_adjust(hspace=0.5)
+        fig, axes = plt.subplots(4, 1, figsize=(11, 15), gridspec_kw={'height_ratios': [1, 1.2, 1.2, 1.2]})
+        plt.subplots_adjust(hspace=0.6)
 
-        # 1. ŞEMA BÖLÜMÜ
+        # 1. ŞEMA
         axes[0].hlines(0, 0, L, color='black', lw=6)
         for p, t in zip(m_pos, m_type):
             if t == 1: axes[0].plot(p, -0.2, '^', ms=20, color='gray')
             if t == 2: axes[0].plot(p, -0.2, 'o', ms=15, color='gray')
             if t == 3: axes[0].vlines(p, -0.6, 0.6, color='black', lw=10)
-        
         if mafsallar.size > 0:
             axes[0].scatter(mafsallar, [0]*len(mafsallar), color='white', edgecolor='black', s=100, zorder=5)
 
@@ -159,12 +157,10 @@ def analiz_motoru():
             axes[0].annotate(f'{ps[i]}kN', xy=(pk[i], 0), xytext=(pk[i], 1.2),
                              arrowprops=dict(facecolor='red', width=1.5, headwidth=7), 
                              ha='center', color='red', fontweight='bold')
-        
         for k in range(len(ws)):
             rect = plt.Rectangle((wb[k], 0), we[k]-wb[k], 0.6, color='orange', alpha=0.3)
             axes[0].add_patch(rect)
-            mid_w = (wb[k] + we[k]) / 2
-            axes[0].text(mid_w, 0.7, f'{ws[k]} kN/m', ha='center', color='darkorange', fontweight='bold', fontsize=9)
+            axes[0].text((wb[k]+we[k])/2, 0.7, f'{ws[k]}kN/m', ha='center', color='darkorange', fontweight='bold', fontsize=9)
 
         axes[0].set_ylim(-1, 2)
         axes[0].axis('off')
@@ -181,31 +177,31 @@ def analiz_motoru():
             ax.grid(True, alpha=0.2)
             ax.axhline(0, color='black', lw=1)
             
-            # Kritik Değerleri Yazdırma
+            # --- KIRILIM NOKTALARINI ETİKETLEME ---
             if np.any(np.abs(d) > 1e-3):
-                idx_max = np.argmax(d)
-                idx_min = np.argmin(d)
-                
-                # Sadece anlamlı fark varsa her ikisini de yaz
-                ax.text(x[idx_max], d[idx_max], f'{d[idx_max]:.1f}', ha='center', va='bottom', color=c, fontweight='bold', fontsize=9)
-                if idx_max != idx_min:
-                    ax.text(x[idx_min], d[idx_min], f'{d[idx_min]:.1f}', ha='center', va='top', color=c, fontweight='bold', fontsize=9)
+                # Her kritik noktadaki değeri hesapla ve yazdır
+                for kx in kritik_x:
+                    # Değeri o noktadaki x indeksinden al
+                    idx = np.abs(x - kx).argmin()
+                    val = d[idx]
+                    
+                    # Etiketleme (Çakışmaları önlemek için küçük ofsetler)
+                    va = 'bottom' if val >= 0 else 'top'
+                    if "M" in t: va = 'top' if val >= 0 else 'bottom' # Moment ters olduğu için
+                    
+                    ax.text(kx, val, f'{val:.1f}', color=c, fontsize=8, 
+                            fontweight='bold', ha='center', va=va)
+                    
+                    # Noktayı işaretle
+                    ax.plot(kx, val, 'o', ms=4, color=c)
 
             if "M" in t: ax.invert_yaxis()
 
         st.pyplot(fig)
         st.success("Analiz Başarıyla Tamamlandı!")
-        
-        st.subheader("📋 Hesaplanan Reaksiyonlar")
-        cols = st.columns(len(m_pos) + (1 if 3 in m_type else 0))
-        for i in range(len(m_pos)):
-            cols[i].metric(f"Mesnet {i+1} ({m_pos[i]}m)", f"{reaksiyonlar[i]:.2f} kN")
-        if 3 in m_type:
-            cols[-1].metric("Ankastre Momenti", f"{reaksiyonlar[len(m_pos)]:.2f} kNm")
 
     except Exception as e:
-        st.error(f"Hata: {e}")
-        st.info("Sistem henüz çözülemedi. Lütfen mesnet/mafsal sayılarını ve konumlarını kontrol edin.")
+        st.error(f"Hata oluştu: {e}")
 
 if __name__ == "__main__":
     analiz_motoru()
