@@ -57,82 +57,84 @@ def analiz_motoru():
         w_centroids = (wb + we) / 2 if wb.size > 0 else np.array([0])
         
         m1, m2 = m_pos[0], m_pos[1]
-        # Statik Moment Dengesi: m1 etrafındaki momentler toplamı = 0
-        # Reaksiyon hesabında dış momentler (ms_val) dengeye dahil edilir.
-        sum_M_loads = np.sum(ps * (pk - m1)) + np.sum(w_totals * (w_centroids - m1)) - np.sum(ms_val)
-        R2y = sum_M_loads / (m2 - m1)
+        # Statik denge: m1'e göre moment
+        sum_M = np.sum(ps * (pk - m1)) + np.sum(w_totals * (w_centroids - m1)) - np.sum(ms_val)
+        R2y = sum_M / (m2 - m1)
         R1y = (np.sum(ps) + np.sum(w_totals)) - R2y
 
-        # --- DİYAGRAM HESABI ---
-        # Daha keskin dikey hatlar için kritik noktaları x dizisine zorla ekliyoruz
-        kritik_noktalar = np.unique(np.concatenate(([0, L], m_pos, pk, mk_pos, wb, we)))
-        x = np.sort(np.unique(np.concatenate((np.linspace(0, L, 1000), kritik_noktalar))))
+        # --- HASSAS DİYAGRAM HESABI ---
+        # Sıçramaları net göstermek için kritik noktaların 0.000001 öncesini ve sonrasını hesaplıyoruz
+        x_points = [0, L]
+        for p in m_pos: x_points.extend([p-1e-9, p, p+1e-9])
+        for p in pk: x_points.extend([p-1e-9, p, p+1e-9])
+        for p in mk_pos: x_points.extend([p-1e-9, p, p+1e-9])
+        for p in wb: x_points.extend([p-1e-9, p, p+1e-9])
+        for p in we: x_points.extend([p-1e-9, p, p+1e-9])
         
+        x = np.unique(np.sort(np.concatenate((np.linspace(0, L, 1000), x_points))))
+        x = x[(x >= 0) & (x <= L)] # Sınırları koru
+
         V = np.zeros_like(x)
         M = np.zeros_like(x)
 
         for i, xi in enumerate(x):
-            # Kesme (V)
-            v = 0
-            if xi >= m1: v += R1y
-            if xi >= m2: v += R2y
+            # Kesme
+            cv = 0
+            if xi >= m1: cv += R1y
+            if xi >= m2: cv += R2y
             for j in range(len(ps)):
-                if xi >= pk[j]: v -= ps[j]
+                if xi >= pk[j]: cv -= ps[j]
             for k in range(len(ws)):
-                w_len = max(0, min(xi, we[k]) - wb[k])
-                v -= ws[k] * w_len
-            V[i] = v
+                active = max(0, min(xi, we[k]) - wb[k])
+                cv -= ws[k] * active
+            V[i] = cv
 
-            # Moment (M)
-            m = 0
-            if xi >= m1: m += R1y * (xi - m1)
-            if xi >= m2: m += R2y * (xi - m2)
+            # Moment
+            cm = 0
+            if xi >= m1: cm += R1y * (xi - m1)
+            if xi >= m2: cm += R2y * (xi - m2)
             for j in range(len(ps)):
-                if xi >= pk[j]: m -= ps[j] * (xi - pk[j])
+                if xi >= pk[j]: cm -= ps[j] * (xi - pk[j])
             for k in range(len(ws)):
                 if xi > wb[k]:
-                    active_w = min(xi, we[k]) - wb[k]
-                    m -= (ws[k] * active_w) * (xi - (wb[k] + active_w/2))
+                    a_w = min(xi, we[k]) - wb[k]
+                    cm -= (ws[k] * a_w) * (xi - (wb[k] + a_w/2))
             for mv, mk in zip(ms_val, mk_pos):
-                # ÖNEMLİ: Sıçramanın dikey görünmesi için tam o noktada momenti ekle
-                if xi >= mk: m += mv
-            M[i] = m
+                if xi >= mk: cm += mv
+            M[i] = cm
 
         # --- GÖRSELLEŞTİRME ---
-        fig, axes = plt.subplots(3, 1, figsize=(11, 12), gridspec_kw={'height_ratios': [1, 1.2, 1.2]})
+        fig, axes = plt.subplots(3, 1, figsize=(11, 10), gridspec_kw={'height_ratios': [1, 1.2, 1.2]})
         plt.subplots_adjust(hspace=0.4)
 
-        # 1. ŞEMA
         axes[0].hlines(0, 0, L, color='black', lw=6)
-        for p in m_pos: axes[0].plot(p, -0.2, '^', ms=18, color='gray')
-        for k in range(len(ws)):
-            rect = plt.Rectangle((wb[k], 0), we[k]-wb[k], 0.6, color='orange', alpha=0.3)
-            axes[0].add_patch(rect)
+        for p in m_pos: axes[0].plot(p, -0.2, '^', ms=15, color='gray')
         axes[0].set_ylim(-1, 2); axes[0].axis('off')
 
-        # 2. V DİYAGRAMI
-        axes[1].step(x, V, where='post', color='blue', lw=2)
-        axes[1].fill_between(x, V, step='post', color='blue', alpha=0.1)
-        axes[1].axhline(0, color='black', lw=1); axes[1].grid(True, alpha=0.2)
+        # V Diyagramı
+        axes[1].plot(x, V, color='blue', lw=2)
+        axes[1].fill_between(x, V, color='blue', alpha=0.1)
         axes[1].set_title("V (Kesme Kuvveti) - kN", loc='left', fontweight='bold')
+        axes[1].axhline(0, color='black', lw=1)
 
-        # 3. M DİYAGRAMI
+        # M Diyagramı
         axes[2].plot(x, M, color='red', lw=2)
         axes[2].fill_between(x, M, color='red', alpha=0.1)
-        axes[2].axhline(0, color='black', lw=1); axes[2].grid(True, alpha=0.2)
-        axes[2].invert_yaxis()
         axes[2].set_title("M (Eğilme Momenti) - kNm", loc='left', fontweight='bold')
+        axes[2].axhline(0, color='black', lw=1)
+        axes[2].invert_yaxis()
 
-        # Değer Etiketleri (Sadece kritik noktalarda)
-        for kx in kritik_noktalar:
-            idx = np.searchsorted(x, kx)
+        # Etiketler (Sadece tam metrelerde ve uçlarda)
+        label_points = np.unique(np.concatenate(([0, L], m_pos, pk, mk_pos)))
+        for lp in label_points:
+            idx = np.searchsorted(x, lp)
             if idx < len(x):
                 mv, mm = V[idx], M[idx]
-                if abs(mv) > 0.1: axes[1].text(kx, mv, f'{round(mv,1)}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-                axes[2].text(kx, mm, f'{round(mm,1)}', ha='center', va='top' if mm > 0 else 'bottom', fontsize=9, fontweight='bold')
+                axes[1].text(lp, mv, f'{round(mv,1)}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+                axes[2].text(lp, mm, f'{round(mm,1)}', ha='center', va='top' if mm > 0 else 'bottom', fontsize=9, fontweight='bold')
 
         st.pyplot(fig)
-        st.info(f"Reaksiyonlar: R1 = {R1y:.1f} kN | R2 = {R2y:.1f} kN")
+        st.success(f"Analiz Tamamlandı! R1: {R1y:.1f}kN, R2: {R2y:.1f}kN")
 
     except Exception as e:
         st.info("Hesaplanıyor...")
