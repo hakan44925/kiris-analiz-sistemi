@@ -3,108 +3,170 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # --- SAYFA YAPILANDIRMASI ---
-st.set_page_config(page_title="Hakan Çırak - Gerber Analiz Portalı", layout="wide")
+st.set_page_config(page_title="Hakan Çırak - Kiriş Analiz Portalı", layout="wide")
 
 st.markdown("""
     <style>
-    .block-container {padding-top: 1.5rem;}
-    h1 {color: #1E3A8A; text-align: center;}
-    .metric-box {background-color: #f0f2f6; padding: 10px; border-radius: 10px; text-align: center;}
+    .block-container {padding-top: 2rem; padding-bottom: 0rem;}
+    h1 {margin-bottom: 0rem; color: #1E3A8A;}
+    hr {margin-top: 1rem; margin-bottom: 1rem;}
     </style>
     """, unsafe_allow_html=True)
 
 st.title("🏗️ Profesyonel Gerber Kiriş Analiz Sistemi")
-st.write("---")
+st.markdown("---")
 
-# --- SIDEBAR ---
+# --- SIDEBAR (TÜM AYARLAR GERİ GELDİ) ---
 with st.sidebar:
     st.header("📐 Sistem Parametreleri")
-    L = st.number_input("Kiriş Toplam Boyu (m)", value=8.0, step=1.0)
-    mafsal = st.number_input("Gerber Mafsal Konumu (m)", value=4.0, step=0.5)
-    
+    L = st.sidebar.number_input("Kiriş Toplam Boyu (m)", value=8.0, min_value=0.1)
+
+    st.subheader("⚪ Mafsallar (Gerber)")
+    mafsal_raw = st.sidebar.text_input("Mafsal Konumları (m)", "4")
+
     st.subheader("🔗 Mesnetler")
-    st.info("A Noktası (0m): Ankastre\nB Noktası (8m): Hareketli")
-    
-    st.subheader("🔴 Yükler")
-    q = st.number_input("Yayılı Yük (kN/m) - [0-4m arası]", value=2.0)
-    P = st.number_input("Tekil Yük (kN)", value=4.0)
-    Pk = st.number_input("Tekil Yük Konumu (m)", value=6.0)
+    m_pos_raw = st.sidebar.text_input("Mesnet Konumları", "0, 8")
+    m_type_raw = st.sidebar.text_input("Mesnet Türleri (1:Sabit, 2:Hark, 3:Ank)", "3, 2")
+
+    st.subheader("🔴 Tekil Yükler")
+    p_s_raw = st.sidebar.text_input("Yük Şiddetleri (kN)", "4")
+    p_k_raw = st.sidebar.text_input("Yük Konumları (m)", "6")
+    p_a_raw = st.sidebar.text_input("Yük Açıları (Derece)", "90")
+
+    st.subheader("🟠 Yayılı Yükler")
+    w_s_raw = st.sidebar.text_input("Yayılı Yük Şiddetleri (kN/m)", "2")
+    w_b_raw = st.sidebar.text_input("Başlangıç Metreleri", "0")
+    w_e_raw = st.sidebar.text_input("Bitiş Metreleri", "4")
 
 def analiz_motoru():
     try:
-        # --- STATİK HESAPLAMA (EL HESABI MANTIĞI) ---
-        # 1. Mafsalın Sağındaki Sistem (CB Kirişi: 4m - 8m)
-        # ΣM_mafsal = 0 => By * (8 - 4) - P * (6 - 4) = 0
-        By = (P * (Pk - mafsal)) / (L - mafsal)
-        Cy = P - By # Mafsal reaksiyonu (Düşey denge)
+        def parse_input(raw):
+            processed = [i.strip() for i in raw.split(',') if i.strip()]
+            return np.array([float(i) for i in processed]) if processed else np.array([])
 
-        # 2. Mafsalın Solundaki Sistem (AC Kirişi: 0m - 4m)
-        # ΣFy = 0 => Ay - (q * 4) - Cy = 0
-        Ay = (q * mafsal) + Cy
-        # ΣM_A = 0 => Ma - (q * 4 * 2) - (Cy * 4) = 0
-        Ma = (q * mafsal * (mafsal/2)) + (Cy * mafsal)
+        # Girdileri Çek
+        m_pos = parse_input(m_pos_raw)
+        m_type = parse_input(m_type_raw).astype(int)
+        mafsallar = parse_input(mafsal_raw)
+        ps = parse_input(p_s_raw)
+        pk = parse_input(p_k_raw)
+        pa = parse_input(p_a_raw)
+        if pa.size == 0 and ps.size > 0: pa = np.full_like(ps, 90.0)
+        ws = parse_input(w_s_raw)
+        wb = parse_input(w_b_raw)
+        we = parse_input(w_e_raw)
 
-        # --- DİYAGRAM VERİLERİ ---
+        # Bileşenler
+        py = ps * np.sin(np.deg2rad(pa)) if ps.size > 0 else np.array([])
+
+        # --- REAKSİYON ÇÖZÜCÜ (GENEL MATRİS) ---
+        reak_defs = []
+        for i, t in enumerate(m_type):
+            reak_defs.append({'idx': i, 'pos': m_pos[i], 'type': 'Ry'})
+            if t == 3: reak_defs.append({'idx': i, 'pos': m_pos[i], 'type': 'Ma'})
+        
+        n_reak = len(reak_defs)
+        A = np.zeros((n_reak, n_reak))
+        B = np.zeros(n_reak)
+
+        # ΣFy = 0
+        for j, r in enumerate(reak_defs):
+            if r['type'] == 'Ry': A[0, j] = 1
+        B[0] = np.sum(py) + np.sum(ws * (we - wb))
+
+        # ΣM_0 = 0
+        for j, r in enumerate(reak_defs):
+            if r['type'] == 'Ry': A[1, j] = r['pos']
+            if r['type'] == 'Ma': A[1, j] = 1
+        B[1] = np.sum(py * pk) + np.sum(ws * (we - wb) * (wb + we)/2)
+
+        # Mafsal Denklemleri
+        for i, m_x in enumerate(mafsallar):
+            if i + 2 >= n_reak: break
+            row = i + 2
+            for j, r in enumerate(reak_defs):
+                if r['pos'] <= m_x:
+                    if r['type'] == 'Ry': A[row, j] = (m_x - r['pos'])
+                    if r['type'] == 'Ma': A[row, j] = 1
+            
+            m_load = np.sum(py[pk < m_x] * (m_x - pk[pk < m_x]))
+            for k in range(len(ws)):
+                if wb[k] < m_x:
+                    e_x = min(we[k], m_x)
+                    m_load += (ws[k] * (e_x - wb[k])) * (m_x - (wb[k] + e_x)/2)
+            B[row] = m_load
+
+        reaksiyonlar = np.linalg.solve(A, B)
+
+        # --- DİYAGRAM HESAPLARI ---
         x = np.linspace(0, L, 1000)
-        V = np.zeros_like(x)
-        M = np.zeros_like(x)
+        V, M = np.zeros_like(x), np.zeros_like(x)
 
         for i, xi in enumerate(x):
-            if xi <= mafsal:
-                # 0 - 4m Arası (Sol parça)
-                V[i] = Ay - (q * xi)
-                # Moment Denklemi: M(x) = Ay*x - q*x²/2 - Ma
-                M[i] = (Ay * xi) - (q * (xi**2) / 2) - Ma
-            else:
-                # 4 - 8m Arası (Sağ parça)
-                # Buradan itibaren reaksiyonlar ve yükler değişir
-                V[i] = Ay - (q * mafsal) - (P if xi >= Pk else 0)
-                # Moment: M(x) = Ay*x - q*mafsal*(x - mafsal/2) - P*(x - Pk) - Ma
-                m_part1 = (Ay * xi) - Ma
-                m_part2 = (q * mafsal) * (xi - (mafsal / 2))
-                m_part3 = P * (xi - Pk) if xi >= Pk else 0
-                M[i] = m_part1 - m_part2 - m_part3
+            v_val, m_val = 0, 0
+            for j, r in enumerate(reak_defs):
+                if xi >= r['pos']:
+                    if r['type'] == 'Ry':
+                        v_val += reaksiyonlar[j]
+                        m_val += reaksiyonlar[j] * (xi - r['pos'])
+                    if r['type'] == 'Ma':
+                        m_val -= reaksiyonlar[j] # Ankastre moment etkisi
+            
+            for j in range(len(py)):
+                if xi >= pk[j]:
+                    v_val -= py[j]
+                    m_val -= py[j] * (xi - pk[j])
+            
+            for k in range(len(ws)):
+                if xi > wb[k]:
+                    L_eff = min(xi, we[k]) - wb[k]
+                    v_val -= ws[k] * L_eff
+                    m_val -= (ws[k] * L_eff) * (xi - (wb[k] + min(xi, we[k]))/2)
+            
+            V[i], M[i] = v_val, m_val
 
         # --- GÖRSELLEŞTİRME ---
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 10))
-        plt.subplots_adjust(hspace=0.4)
+        fig, axes = plt.subplots(3, 1, figsize=(11, 12))
+        plt.subplots_adjust(hspace=0.5)
 
-        # Kesme Kuvveti (V)
-        ax1.plot(x, V, color='#2563EB', lw=2.5)
-        ax1.fill_between(x, V, color='#2563EB', alpha=0.15)
-        ax1.axhline(0, color='black', lw=1.2)
-        ax1.set_title("V - Kesme Kuvveti Diyagramı (kN)", loc='left', fontweight='bold', color='#1E3A8A')
-        ax1.grid(True, linestyle=':', alpha=0.6)
+        # Şema
+        axes[0].hlines(0, 0, L, color='black', lw=5)
+        for r in reak_defs:
+            if r['type'] == 'Ry':
+                t = m_type[r['idx']]
+                if t == 3: axes[0].vlines(r['pos'], -0.5, 0.5, lw=8)
+                else: axes[0].plot(r['pos'], -0.2, '^', ms=15)
+        if mafsallar.size > 0:
+            axes[0].scatter(mafsallar, [0]*len(mafsallar), color='white', edgecolor='black', s=100, zorder=5)
+        axes[0].set_title("Yapısal Şema")
+        axes[0].axis('off')
 
-        # Moment (M)
-        ax2.plot(x, M, color='#DC2626', lw=2.5)
-        ax2.fill_between(x, M, color='#DC2626', alpha=0.15)
-        ax2.axhline(0, color='black', lw=1.2)
-        ax2.set_title("M - Eğilme Momenti Diyagramı (kNm)", loc='left', fontweight='bold', color='#1E3A8A')
-        ax2.grid(True, linestyle=':', alpha=0.6)
-        ax2.invert_yaxis() # Moment çekme tarafına (El hesabındaki gibi alt tarafa pozitif)
-
-        # Kritik Noktaları İşaretleme
-        kritik_noktalar = [0, mafsal, Pk, L]
-        for ax, data in zip([ax1, ax2], [V, M]):
-            for kn in kritik_noktalar:
-                idx = np.abs(x - kn).argmin()
-                val = data[idx]
-                ax.plot(kn, val, 'o', color='black', ms=5)
-                ax.text(kn, val, f' {val:.1f}', fontweight='bold', va='bottom' if val > 0 else 'top')
+        # V ve M Diyagramları
+        for ax, data, title, color in zip(axes[1:], [V, M], ["V (Kesme) - kN", "M (Moment) - kNm"], ["blue", "red"]):
+            ax.plot(x, data, color=color, lw=2)
+            ax.fill_between(x, data, color=color, alpha=0.1)
+            ax.axhline(0, color='black', lw=1)
+            ax.set_title(title, loc='left', fontweight='bold')
+            ax.grid(True, alpha=0.2)
+            if "Moment" in title: ax.invert_yaxis()
+            
+            # Kritik Etiketler
+            kp = np.unique(np.concatenate(([0, L], m_pos, mafsallar, pk)))
+            for p in kp:
+                val = data[np.abs(x - p).argmin()]
+                ax.text(p, val, f'{val:.1f}', fontsize=8, fontweight='bold')
 
         st.pyplot(fig)
+        st.success("Analiz Tamamlandı!")
 
-        # --- SONUÇ PANELİ ---
-        st.markdown("### 📊 Hesaplanan Reaksiyon Kuvvetleri")
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: st.metric("Ay (Düşey)", f"{Ay:.1f} kN")
-        with c2: st.metric("Ma (Ankastre)", f"{Ma:.1f} kNm")
-        with c3: st.metric("By (Düşey)", f"{By:.1f} kN")
-        with c4: st.metric("Cy (Mafsal Etkisi)", f"{Cy:.1f} kN")
+        # Reaksiyon Tablosu
+        cols = st.columns(len(reak_defs))
+        for i, r in enumerate(reak_defs):
+            label = f"Mesnet {r['pos']}m ({r['type']})"
+            cols[i].metric(label, f"{reaksiyonlar[i]:.2f}")
 
     except Exception as e:
-        st.error(f"Hesaplama hatası: {e}")
+        st.error(f"Hata: {e}")
 
 if __name__ == "__main__":
     analiz_motoru()
