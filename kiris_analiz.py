@@ -18,25 +18,25 @@ st.markdown("---")
 
 # --- SIDEBAR (GİRİŞ PANELİ) ---
 st.sidebar.header("📐 Sistem Parametreleri")
-L = st.sidebar.number_input("Kiriş Toplam Boyu (m)", value=12.0, min_value=0.1)
+L = st.sidebar.number_input("Kiriş Toplam Boyu (m)", value=11.0, min_value=0.1)
 
 st.sidebar.subheader("🔗 Mesnetler")
-m_pos_raw = st.sidebar.text_input("Mesnet Konumları", "0, 10")
+m_pos_raw = st.sidebar.text_input("Mesnet Konumları", "0, 8")
 m_type_raw = st.sidebar.text_input("Mesnet Türleri (1:Sabit, 2:Hark, 3:Ank)", "1, 2")
 
 st.sidebar.subheader("🔴 Tekil Yükler")
-p_s_raw = st.sidebar.text_input("Yük Şiddetleri (kN)", "")
-p_k_raw = st.sidebar.text_input("Yük Konumları (m)", "")
+p_s_raw = st.sidebar.text_input("Yük Şiddetleri (kN)", "20")
+p_k_raw = st.sidebar.text_input("Yük Konumları (m)", "11")
 p_a_raw = st.sidebar.text_input("Yük Açıları (Derece)", "90")
 
 st.sidebar.subheader("🔄 Tekil Momentler")
-m_s_raw = st.sidebar.text_input("Moment Şiddetleri (kNm)", "")
-m_k_raw = st.sidebar.text_input("Moment Konumları (m)", "")
+m_s_raw = st.sidebar.text_input("Moment Şiddetleri (kNm)", "-150")
+m_k_raw = st.sidebar.text_input("Moment Konumları (m)", "11")
 
 st.sidebar.subheader("🟠 Yayılı Yükler")
-w_s_raw = st.sidebar.text_input("Yayılı Yük Şiddetleri (kN/m)", "5")
+w_s_raw = st.sidebar.text_input("Yayılı Yük Şiddetleri (kN/m)", "40")
 w_b_raw = st.sidebar.text_input("Başlangıç Metreleri", "0")
-w_e_raw = st.sidebar.text_input("Bitiş Metreleri", "12")
+w_e_raw = st.sidebar.text_input("Bitiş Metreleri", "8")
 
 def analiz_motoru():
     try:
@@ -55,120 +55,107 @@ def analiz_motoru():
         wb = parse_input(w_b_raw)
         we = parse_input(w_e_raw)
 
-        x = np.linspace(0, L, 5000)
-        N, V, M = np.zeros_like(x), np.zeros_like(x), np.zeros_like(x)
+        # Çözünürlük (Nokta sayısı artırıldı)
+        x = np.linspace(0, L, 10000)
+        dx = L / (len(x) - 1)
+        V = np.zeros_like(x)
+        M = np.zeros_like(x)
         
-        rad = np.deg2rad(pa) if pa.size > 0 else np.array([])
-        py = ps * np.sin(rad) if ps.size > 0 else ps 
-        px = ps * np.cos(rad) if ps.size > 0 else np.zeros_like(ps)
+        py = ps * np.sin(np.deg2rad(pa)) if ps.size > 0 else np.array([])
 
-        # --- REAKSİYON HESABI ---
+        # --- REAKSİYON HESABI (STATİK DENGE) ---
         w_totals = ws * (np.minimum(we, L) - np.maximum(wb, 0)) if ws.size > 0 else np.array([0])
         w_centroids = (wb + we) / 2 if wb.size > 0 else np.array([0])
         
-        if 3 in m_type: 
+        if 3 in m_type: # Ankastre
             f_idx = np.where(m_type == 3)[0][0]
             fixed_x = m_pos[f_idx]
             R1y = np.sum(py) + np.sum(w_totals)
-            R1x = -np.sum(px)
-            # Moment dengesi (Ankastre mesnet momenti)
-            M_reak = np.sum(py * (pk - fixed_x)) + np.sum(w_totals * (w_centroids - fixed_x)) - np.sum(ms_val)
             R2y = 0
-        else: 
+            # M_reak: Mesnet noktasındaki iç moment
+            M_reak = np.sum(py * (pk - fixed_x)) + np.sum(w_totals * (w_centroids - fixed_x)) - np.sum(ms_val)
+        else: # İki Mesnet
             m1, m2 = m_pos[0], m_pos[1]
-            # m1'e göre moment alarak R2y bulma
-            sum_M_m1 = np.sum(py * (pk - m1)) + np.sum(w_totals * (w_centroids - m1)) - np.sum(ms_val)
-            R2y = sum_M_m1 / (m2 - m1)
+            # m1 noktasına göre moment dengesi:
+            moment_sum = np.sum(py * (pk - m1)) + np.sum(w_totals * (w_centroids - m1)) - np.sum(ms_val)
+            R2y = moment_sum / (m2 - m1)
             R1y = (np.sum(py) + np.sum(w_totals)) - R2y
-            R1x = -np.sum(px)
             M_reak = 0
 
-        # --- DİYAGRAM HESAPLARI ---
+        # --- DİYAGRAM HESAPLARI (KESİM MANTIĞI) ---
         for i, xi in enumerate(x):
-            v_val, m_val = 0, 0
-            # Mesnetler
-            if xi >= m_pos[0]: 
-                v_val += R1y
-                m_val += R1y * (xi - m_pos[0])
-            if len(m_pos) > 1 and xi >= m_pos[1]: 
-                v_val += R2y
-                m_val += R2y * (xi - m_pos[1])
-            if 3 in m_type and xi >= m_pos[0]: 
-                m_val -= M_reak
-            
-            # Yükler
-            for j in range(len(ps)):
-                if xi >= pk[j]:
-                    v_val -= py[j]
-                    m_val -= py[j] * (xi - pk[j])
+            # Kesme Kuvveti (V)
+            cv = 0
+            if xi >= m_pos[0]: cv += R1y
+            if len(m_pos) > 1 and xi >= m_pos[1]: cv += R2y
+            for j in range(len(py)):
+                if xi >= pk[j]: cv -= py[j]
             for k in range(len(ws)):
                 if xi > wb[k]:
-                    a_w = min(xi, we[k]) - wb[k]
-                    v_val -= ws[k] * a_w
-                    m_val -= (ws[k] * a_w) * (xi - (wb[k] + a_w/2))
+                    len_w = min(xi, we[k]) - wb[k]
+                    cv -= ws[k] * len_w
+            V[i] = cv
+
+            # Eğilme Momenti (M)
+            cm = 0
+            if xi >= m_pos[0]: cm += R1y * (xi - m_pos[0])
+            if len(m_pos) > 1 and xi >= m_pos[1]: cm += R2y * (xi - m_pos[1])
+            if 3 in m_type and xi >= m_pos[0]: cm -= M_reak
             
-            # TEKİL MOMENTLER (Burada m_val'e eklenir)
+            for j in range(len(py)):
+                if xi >= pk[j]: cm -= py[j] * (xi - pk[j])
+            for k in range(len(ws)):
+                if xi > wb[k]:
+                    len_w = min(xi, we[k]) - wb[k]
+                    cm -= (ws[k] * len_w) * (xi - (wb[k] + len_w/2))
             for mv, mk in zip(ms_val, mk_pos):
-                if xi >= mk:
-                    m_val += mv
-            
-            V[i], M[i] = v_val, m_val
+                if xi >= mk: cm += mv
+            M[i] = cm
 
         # --- GÖRSELLEŞTİRME ---
-        fig, axes = plt.subplots(4, 1, figsize=(11, 14), gridspec_kw={'height_ratios': [1, 1.2, 1.2, 1.2]})
-        plt.subplots_adjust(hspace=0.5)
+        fig, axes = plt.subplots(3, 1, figsize=(11, 12))
+        plt.subplots_adjust(hspace=0.4)
 
         # 1. ŞEMA
-        axes[0].hlines(0, 0, L, color='black', lw=6)
+        axes[0].hlines(0, 0, L, color='black', lw=5)
         for p, t in zip(m_pos, m_type):
-            if t == 1: axes[0].plot(p, -0.2, '^', ms=20, color='gray')
-            if t == 2: axes[0].plot(p, -0.2, 'o', ms=15, color='gray')
-            if t == 3: axes[0].vlines(p, -0.6, 0.6, color='black', lw=10)
-        
-        for i in range(len(ps)):
-            axes[0].annotate(f'{ps[i]}kN', xy=(pk[i], 0), xytext=(pk[i], 1.2),
-                             arrowprops=dict(facecolor='red', width=1.5, headwidth=7), ha='center', color='red', fontweight='bold')
-        
+            axes[0].plot(p, -0.15, '^' if t==1 else 'o', ms=15, color='gray')
         for k in range(len(ws)):
-            rect = plt.Rectangle((wb[k], 0), we[k]-wb[k], 0.6, color='orange', alpha=0.3)
+            rect = plt.Rectangle((wb[k], 0), we[k]-wb[k], 0.5, color='orange', alpha=0.3)
             axes[0].add_patch(rect)
-            axes[0].text((wb[k]+we[k])/2, 0.7, f'{ws[k]}kN/m', ha='center', color='darkorange', fontweight='bold')
-
+            axes[0].text((wb[k]+we[k])/2, 0.6, f'{ws[k]}kN/m', ha='center', fontweight='bold', color='darkorange')
+        for i in range(len(py)):
+            axes[0].annotate(f'{py[i]}kN', xy=(pk[i],0), xytext=(pk[i],1), arrowprops=dict(facecolor='red', width=1), ha='center', color='red', fontweight='bold')
         for mv, mk in zip(ms_val, mk_pos):
-            axes[0].plot(mk, 0.3, 'o', mfc='none', mec='purple', ms=15, mew=2)
-            axes[0].text(mk, 0.5, f'{mv}kNm', ha='center', color='purple', fontweight='bold')
+            axes[0].plot(mk, 0.2, 'o', mfc='none', mec='purple', ms=12, mew=2)
+            axes[0].text(mk, 0.4, f'{mv}kNm', ha='center', color='purple', fontweight='bold')
+        axes[0].set_ylim(-0.5, 1.5); axes[0].axis('off')
 
-        axes[0].set_ylim(-1, 2)
-        axes[0].axis('off')
+        # 2. V DİYAGRAMI
+        axes[1].plot(x, V, color='blue', lw=2)
+        axes[1].fill_between(x, V, color='blue', alpha=0.1)
+        axes[1].set_title("V (Kesme Kuvveti) - kN", loc='left', fontweight='bold')
+        axes[1].axhline(0, color='black', lw=1); axes[1].grid(True, alpha=0.2)
 
-        # 2. DİYAGRAMLAR
-        titles = ["N (Normal Kuvvet) - kN", "V (Kesme Kuvveti) - kN", "M (Eğilme Momenti) - kNm"]
-        colors = ['green', 'blue', 'red']
-        data_list = [N, V, M]
-        # Kritik noktaları bul (Etiketler için)
-        kritik_x = np.unique(np.concatenate(([0, L], m_pos, pk, wb, we, mk_pos)))
+        # 3. M DİYAGRAMI
+        axes[2].plot(x, M, color='red', lw=2)
+        axes[2].fill_between(x, M, color='red', alpha=0.1)
+        axes[2].set_title("M (Eğilme Momenti) - kNm", loc='left', fontweight='bold')
+        axes[2].axhline(0, color='black', lw=1); axes[2].grid(True, alpha=0.2)
+        axes[2].invert_yaxis() # Çekme tarafı (mühendislik standardı)
 
-        for i, (ax, t, c, d) in enumerate(zip(axes[1:], titles, colors, data_list)):
-            ax.plot(x, d, color=c, lw=2)
-            ax.fill_between(x, d, color=c, alpha=0.1)
-            ax.set_title(t, fontsize=10, loc='left', fontweight='bold')
-            ax.grid(True, alpha=0.2)
-            ax.axhline(0, color='black', lw=1)
-            if "M" in t: 
-                ax.invert_yaxis() # Mühendislik standardı: Moment çekme tarafına
-
-            # Etiketleme
-            for kx in kritik_x:
-                idx = np.argmin(np.abs(x - kx))
-                val = d[idx]
-                if abs(val) > 0.01:
-                    ax.text(kx, val, f'{round(val, 1)}', ha='center', va='bottom' if val>0 else 'top', fontsize=9, fontweight='bold')
+        # Değer etiketleri (Kritik Noktalar)
+        kritik_x = np.unique(np.concatenate(([0, L], m_pos, pk, mk_pos)))
+        for kx in kritik_x:
+            idx = np.argmin(np.abs(x - kx))
+            v_val, m_val = V[idx], M[idx]
+            if abs(v_val) > 0.1: axes[1].text(kx, v_val, f'{round(v_val,1)}', ha='center', fontweight='bold', fontsize=8)
+            if abs(m_val) > 0.1: axes[2].text(kx, m_val, f'{round(m_val,1)}', ha='center', fontweight='bold', fontsize=8)
 
         st.pyplot(fig)
-        st.success(f"Analiz Tamamlandı! R1y: {R1y:.1f}kN, R2y: {R2y:.1f}kN | Ankastre Momenti: {M_reak:.1f}kNm")
+        st.info(f"Reaksiyonlar: R1: {R1y:.1f} kN, R2: {R2y:.1f} kN")
 
     except Exception as e:
-        st.info("Sistem girişleri bekleniyor veya bir hata oluştu. Lütfen parametreleri kontrol edin.")
+        st.error(f"Hata: {e}")
 
-if __name__ == "__main__":
-    analiz_motoru()
+analiz_motoru()
