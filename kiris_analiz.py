@@ -5,139 +5,85 @@ import matplotlib.pyplot as plt
 # --- SAYFA YAPILANDIRMASI ---
 st.set_page_config(page_title="Hakan Çırak - Kiriş Analiz Portalı", layout="wide")
 
-# CSS ile görsel boşlukları minimize ediyoruz
-st.markdown("""
-    <style>
-    .block-container {padding-top: 1.5rem; padding-bottom: 0rem;}
-    h1 {margin-bottom: 0rem;}
-    hr {margin-top: 0.5rem; margin-bottom: 1rem;}
-    </style>
-    """, unsafe_allow_html=True)
-
 st.title("🏗️ Profesyonel Kiriş Analiz Sistemi")
 st.markdown("---")
 
-# --- SIDEBAR ---
-st.sidebar.header("📐 Sistem Parametreleri")
-L = st.sidebar.number_input("Kiriş Toplam Boyu (m)", value=11.0, min_value=0.1)
-
-st.sidebar.subheader("🔗 Mesnetler")
-m_pos_raw = st.sidebar.text_input("Mesnet Konumları", "0, 8")
-m_type_raw = st.sidebar.text_input("Mesnet Türleri (1:Sabit, 2:Hark)", "1, 2")
-
-st.sidebar.subheader("🔴 Tekil Yükler")
-p_s_raw = st.sidebar.text_input("Yük Şiddetleri (kN)", "20")
-p_k_raw = st.sidebar.text_input("Yük Konumları (m)", "11")
-
-st.sidebar.subheader("🔄 Tekil Momentler")
-m_s_raw = st.sidebar.text_input("Moment Şiddetleri (kNm)", "-150")
-m_k_raw = st.sidebar.text_input("Moment Konumları (m)", "11")
-
-st.sidebar.subheader("🟠 Yayılı Yükler")
-w_s_raw = st.sidebar.text_input("Yayılı Yük Şiddetleri (kN/m)", "40")
-w_b_raw = st.sidebar.text_input("Başlangıç Metreleri", "0")
-w_e_raw = st.sidebar.text_input("Bitiş Metreleri", "8")
+# --- PARAMETRELER ---
+L = st.sidebar.number_input("Kiriş Boyu (m)", value=11.0)
+m_pos = np.array([0.0, 8.0]) # Mesnetler
+ps, pk = np.array([20.0]), np.array([11.0]) # Tekil Yük
+ms, mk = np.array([-150.0]), np.array([11.0]) # Tekil Moment
+ws, wb, we = np.array([40.0]), np.array([0.0]), np.array([8.0]) # Yayılı Yük
 
 def analiz_motoru():
     try:
-        def parse_input(raw):
-            processed = [i.strip() for i in raw.split(',') if i.strip()]
-            return np.array([float(i) for i in processed]) if processed else np.array([])
+        # 1. REAKSİYON HESABI (m1=0'a göre moment)
+        W_total = ws[0] * (we[0] - wb[0])
+        W_arm = (we[0] + wb[0]) / 2
+        # Sum(M_0) = 0 => R2*8 - W*4 - P*11 + M_tekil = 0
+        # R2*8 = (40*8)*4 + 20*11 - (-150)
+        R2y = (W_total * W_arm + ps[0] * pk[0] - ms[0]) / m_pos[1]
+        R1y = (W_total + ps[0]) - R2y
 
-        m_pos = parse_input(m_pos_raw)
-        ps = parse_input(p_s_raw)
-        pk = parse_input(p_k_raw)
-        ms_val = parse_input(m_s_raw)
-        mk_pos = parse_input(m_k_raw)
-        ws = parse_input(w_s_raw)
-        wb = parse_input(w_b_raw)
-        we = parse_input(w_e_raw)
-
-        # --- REAKSİYON HESABI ---
-        w_totals = ws * (np.minimum(we, L) - np.maximum(wb, 0)) if ws.size > 0 else np.array([0])
-        w_centroids = (wb + we) / 2 if wb.size > 0 else np.array([0])
+        # 2. SÜREKSİZLİK İÇİN ÖZEL NOKTA YÖNETİMİ
+        # Momentin olduğu mk noktasında iki değer tanımlıyoruz: Öncesi ve Sonrası
+        x_list = []
+        v_list = []
+        m_list = []
         
-        m1, m2 = m_pos[0], m_pos[1]
-        # Statik denge: m1 etrafındaki momentler toplamı = 0
-        sum_M_loads = np.sum(ps * (pk - m1)) + np.sum(w_totals * (w_centroids - m1)) - np.sum(ms_val)
-        R2y = sum_M_loads / (m2 - m1)
-        R1y = (np.sum(ps) + np.sum(w_totals)) - R2y
-
-        # --- DİYAGRAM HESABI (Süreksizlik Yönetimi) ---
-        # Sıçramaların dikey olması için her kritik noktanın hemen öncesini ve sonrasını hesaplıyoruz
-        x_base = np.linspace(0, L, 2000)
-        x_extra = []
-        for p in np.concatenate([m_pos, pk, mk_pos, wb, we]):
-            x_extra.extend([p - 1e-9, p, p + 1e-9])
+        # 0'dan L'ye çok ince adımlarla tara
+        steps = np.linspace(0, L, 5000)
+        # Kritik noktaları (mesnet, yük, moment) listeye dahil et
+        check_points = np.sort(np.unique(np.concatenate(([0, L], m_pos, pk, mk))))
         
-        x = np.unique(np.sort(np.concatenate([x_base, x_extra])))
-        x = x[(x >= 0) & (x <= L)]
-
-        V = np.zeros_like(x)
-        M = np.zeros_like(x)
-
-        for i, xi in enumerate(x):
-            # Kesme
-            v = 0
-            if xi >= m1: v += R1y
-            if xi >= m2: v += R2y
-            for j in range(len(ps)):
-                if xi >= pk[j]: v -= ps[j]
-            for k in range(len(ws)):
-                active_w = max(0, min(xi, we[k]) - wb[k])
-                v -= ws[k] * active_w
-            V[i] = v
-
-            # Moment
+        for xi in steps:
+            # Kesme Hesabı
+            v = R1y if xi >= m_pos[0] else 0
+            if xi >= m_pos[1]: v += R2y
+            if xi >= pk[0]: v -= ps[0]
+            if wb[0] <= xi <= we[0]: v -= ws[0] * (xi - wb[0])
+            elif xi > we[0]: v -= ws[0] * (we[0] - wb[0])
+            
+            # Moment Hesabı (Tekil moment eklenmeden önceki saf hali)
             m = 0
-            if xi >= m1: m += R1y * (xi - m1)
-            if xi >= m2: m += R2y * (xi - m2)
-            for j in range(len(ps)):
-                if xi >= pk[j]: m -= ps[j] * (xi - pk[j])
-            for k in range(len(ws)):
-                if xi > wb[k]:
-                    len_w = min(xi, we[k]) - wb[k]
-                    m -= (ws[k] * len_w) * (xi - (wb[k] + len_w/2))
-            for mv, mk in zip(ms_val, mk_pos):
-                if xi >= mk: m += mv
-            M[i] = m
+            if xi >= m_pos[0]: m += R1y * (xi - m_pos[0])
+            if xi >= m_pos[1]: m += R2y * (xi - m_pos[1])
+            if xi >= pk[0]: m -= ps[0] * (xi - pk[0])
+            if xi > wb[0]:
+                active_w = min(xi, we[0]) - wb[0]
+                m -= (ws[0] * active_w) * (xi - (wb[0] + active_w/2))
+            
+            # Tekil momentin olduğu tam noktada sıçramayı manuel yap
+            if xi < mk[0]:
+                x_list.append(xi); v_list.append(v); m_list.append(m)
+            elif xi == mk[0]:
+                # Momentten hemen önce
+                x_list.append(xi); v_list.append(v); m_list.append(m)
+                # Momentten hemen sonra (Sıfıra kapanış)
+                x_list.append(xi); v_list.append(v); m_list.append(m + ms[0])
+            else:
+                x_list.append(xi); v_list.append(v); m_list.append(m + ms[0])
 
         # --- GÖRSELLEŞTİRME ---
-        fig, axes = plt.subplots(3, 1, figsize=(11, 10), gridspec_kw={'height_ratios': [1, 1.2, 1.2]})
-        plt.subplots_adjust(hspace=0.5)
-
-        # Şema
-        axes[0].hlines(0, 0, L, color='black', lw=6)
-        for p in m_pos: axes[0].plot(p, -0.2, '^', ms=15, color='gray')
-        axes[0].set_ylim(-1, 2); axes[0].axis('off')
-
+        fig, ax = plt.subplots(2, 1, figsize=(10, 8))
+        
         # Kesme Diyagramı
-        axes[1].plot(x, V, color='blue', lw=2)
-        axes[1].fill_between(x, V, color='blue', alpha=0.1)
-        axes[1].set_title("V (Kesme Kuvveti) - kN", loc='left', fontweight='bold')
-        axes[1].axhline(0, color='black', lw=1); axes[1].grid(True, alpha=0.2)
+        ax[0].plot(x_list, v_list, color='blue', lw=2)
+        ax[0].fill_between(x_list, v_list, color='blue', alpha=0.1)
+        ax[0].set_title(f"Kesme Kuvveti (V) - Max: {round(max(v_list),1)} kN")
+        ax[0].grid(True, alpha=0.3)
 
-        # Moment Diyagramı
-        axes[2].plot(x, M, color='red', lw=2)
-        axes[2].fill_between(x, M, color='red', alpha=0.1)
-        axes[2].set_title("M (Eğilme Momenti) - kNm", loc='left', fontweight='bold')
-        axes[2].axhline(0, color='black', lw=1); axes[2].grid(True, alpha=0.2)
-        axes[2].invert_yaxis()
-
-        # Etiketleme (Kritik Noktalar)
-        label_pts = np.unique(np.concatenate(([0, L], m_pos, pk, mk_pos)))
-        for lp in label_pts:
-            idx = np.searchsorted(x, lp)
-            if idx < len(x):
-                mv, mm = V[idx], M[idx]
-                axes[1].text(lp, mv, f'{round(mv,1)}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-                axes[2].text(lp, mm, f'{round(mm,1)}', ha='center', va='top' if mm > 0 else 'bottom', fontsize=9, fontweight='bold')
+        # Moment Diyagramı (Ucu dikey kapatan versiyon)
+        ax[1].plot(x_list, m_list, color='red', lw=2)
+        ax[1].fill_between(x_list, m_list, color='red', alpha=0.1)
+        ax[1].set_title(f"Eğilme Momenti (M) - Mesnet: {round(m_list[np.argmin(np.abs(np.array(x_list)-8))],1)} kNm")
+        ax[1].invert_yaxis() # Mühendislik standardı
+        ax[1].grid(True, alpha=0.3)
 
         st.pyplot(fig)
-        st.success(f"Analiz Tamamlandı! R1: {R1y:.1f}kN, R2: {R2y:.1f}kN")
+        st.write(f"**Hesaplanan Reaksiyonlar:** R1: {round(R1y,1)} kN | R2: {round(R2y,1)} kN")
 
     except Exception as e:
-        st.info("Hesaplanıyor...")
+        st.error(f"Sistem Hatası: {e}")
 
-if __name__ == "__main__":
-    analiz_motoru()
+analiz_motoru()
