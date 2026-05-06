@@ -1,108 +1,91 @@
 import streamlit as st
 import numpy as np
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 
-# --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Hakan Çırak - İnteraktif Gerber Analiz", layout="wide")
+# --- SAYFA YAPILANDIRMASI ---
+st.set_page_config(page_title="Hakan Çırak - İnteraktif Statik", layout="wide")
 
-st.markdown("""
-    <style>
-    .block-container {padding-top: 2rem;}
-    h1 {color: #1E3A8A; text-align: center; font-family: sans-serif;}
-    </style>
-    """, unsafe_allow_html=True)
+st.title("🏗️ Profesyonel Statik Simülatör (Slider Kontrollü)")
+st.write("Sürgüleri kaydırarak diyagramlardaki değişimi anlık izleyebilirsiniz.")
 
-st.title("🏗️ Profesyonel Etkileşimli Statik Simülatör")
-st.write("---")
-
-# --- SIDEBAR (SÜRGÜLER - GÖRSELDEKİ GİBİ) ---
+# --- SIDEBAR (SÜRGÜLER) ---
 with st.sidebar:
-    st.header("📐 Geometri")
+    st.header("📐 Geometri Ayarları")
     L1 = st.slider("L1 Uzunluğu (m)", 1.0, 10.0, 4.0)
     L2 = st.slider("L2 Uzunluğu (m)", 0.5, 5.0, 1.0)
     L3 = st.slider("L3 Uzunluğu (m)", 1.0, 10.0, 2.0)
     
-    st.header("🔴 Yükler")
-    q = st.slider("Yayılı Yük (q - kN/m)", 0.0, 10.0, 2.0)
-    F = st.slider("Tekil Yük (F - kN)", 0.0, 20.0, 5.0)
-    alpha = st.slider("Yük Açısı (α - Derece)", 0, 180, 60)
-    xF = st.slider("F Yükü Konumu (m)", 0.0, L1, 1.0)
+    st.header("🔴 Yük Ayarları")
+    q = st.slider("Yayılı Yük (kN/m)", 0.0, 10.0, 2.0)
+    F = st.slider("Tekil Yük (kN)", 0.0, 20.0, 5.0)
+    alpha = st.slider("Yük Açısı (Derece)", 0, 180, 60)
+    xF = st.slider("Yük Konumu (m)", 0.0, float(L1), 1.0)
 
 # --- ANALİZ MOTORU ---
 def analiz():
     total_L = L1 + L2 + L3
-    mafsal_x = L1 + L2 # Görseldeki mafsal konumu
-    
     # Yük Bileşenleri
     rad = np.deg2rad(alpha)
     Fx = F * np.cos(rad)
     Fy = F * np.sin(rad)
     
-    # Reaksiyon Hesapları (Statik Ayırma Metodu)
-    # 1. Sağ Parça (Mafsal - Sağ Mesnet)
-    # By * L3 - (q * L3 * L3/2) = 0
+    # Reaksiyonlar (Basitleştirilmiş Gerber Çözümü)
     By = (q * L3) / 2
-    Cy = (q * L3) - By # Mafsal tepkisi
-    
-    # 2. Sol Parça (Sol Mesnet - Mafsal)
-    # ΣM_sol_mesnet = 0 => R2y * L1 - Fy * xF - Cy * (L1 + L2) = 0
+    Cy = (q * L3) - By
     R2y = (Fy * xF + Cy * (L1 + L2)) / L1
     R1y = Fy + Cy - R2y
     
-    # Diyagram Verileri
+    # Veri Noktaları
     x = np.linspace(0, total_L, 1000)
     N, V, M = np.zeros_like(x), np.zeros_like(x), np.zeros_like(x)
     
     for i, xi in enumerate(x):
-        # Normal Kuvvet (N) - Eksenel
-        if xi < xF: N[i] = 0
-        elif xi <= L1: N[i] = -Fx
-        else: N[i] = 0
-        
-        # Kesme (V) ve Moment (M)
+        # Normal Kuvvet
+        if xi >= xF and xi <= L1: N[i] = -Fx
+        # Kesme ve Moment
         if xi <= xF:
-            V[i] = R1y
-            M[i] = R1y * xi
+            V[i], M[i] = R1y, R1y * xi
         elif xi <= L1:
-            V[i] = R1y - Fy
-            M[i] = R1y * xi - Fy * (xi - xF)
+            V[i], M[i] = R1y - Fy, R1y * xi - Fy * (xi - xF)
         elif xi <= (L1 + L2):
-            V[i] = R1y - Fy + R2y
-            M[i] = R1y * xi - Fy * (xi - xF) + R2y * (xi - L1)
-        else: # Yayılı yük bölgesi
-            dist_mafsal = xi - (L1 + L2)
-            V[i] = Cy - q * dist_mafsal
-            M[i] = Cy * dist_mafsal - (q * dist_mafsal**2 / 2)
+            V[i], M[i] = R1y - Fy + R2y, R1y * xi - Fy * (xi - xF) + R2y * (xi - L1)
+        else: # Yayılı yük
+            d = xi - (L1 + L2)
+            V[i], M[i] = Cy - q * d, Cy * d - (q * d**2 / 2)
             
     return x, N, V, M
 
 x, N, V, M = analiz()
 
-# --- GÖRSELLEŞTİRME (PLOTLY - ETKİLEŞİMLİ) ---
-fig = go.Figure()
+# --- GÖRSELLEŞTİRME (MATPLOTLIB - STANDART) ---
+fig, axes = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+plt.subplots_adjust(hspace=0.4)
 
-# Normal Kuvvet (Yeşil)
-fig.add_trace(go.Scatter(x=x, y=N, fill='tozeroy', name='Normal (N) [kN]', line=dict(color='green', width=2)))
+# 1. Normal Kuvvet (Yeşil)
+axes[0].plot(x, N, color='green', lw=2)
+axes[0].fill_between(x, N, color='green', alpha=0.2)
+axes[0].set_title("Normal Kuvvet (N) - kN", fontweight='bold', loc='left')
 
-# Kesme Kuvveti (Kırmızı)
-fig.add_trace(go.Scatter(x=x, y=V, fill='tozeroy', name='Kesme (V) [kN]', line=dict(color='red', width=2)))
+# 2. Kesme Kuvveti (Kırmızı)
+axes[1].plot(x, V, color='red', lw=2)
+axes[1].fill_between(x, V, color='red', alpha=0.2)
+axes[1].set_title("Kesme Kuvveti (V) - kN", fontweight='bold', loc='left')
 
-# Moment (Mavi)
-fig.add_trace(go.Scatter(x=x, y=M, fill='tozeroy', name='Moment (M) [kNm]', line=dict(color='blue', width=2)))
+# 3. Moment Diyagramı (Mavi)
+axes[2].plot(x, M, color='blue', lw=2)
+axes[2].fill_between(x, M, color='blue', alpha=0.2)
+axes[2].set_title("Moment Diyagramı (M) - kNm", fontweight='bold', loc='left')
+axes[2].invert_yaxis() # Çekme tarafı
 
-fig.update_layout(
-    height=600,
-    hovermode="x unified",
-    template="plotly_white",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    margin=dict(l=20, r=20, t=50, b=20)
-)
-fig.update_yaxes(autorange="reversed", selector=dict(name='Moment (M) [kNm]')) # Moment ters çizim
+for ax in axes:
+    ax.axhline(0, color='black', lw=1)
+    ax.grid(True, linestyle='--', alpha=0.5)
 
-st.plotly_chart(fig, use_container_width=True)
+st.pyplot(fig)
 
-# Sonuç Paneli
+# --- REAKSİYON KARTLARI ---
+st.write("---")
 c1, c2, c3 = st.columns(3)
-c1.metric("Max Moment", f"{np.max(np.abs(M)):.1f} kNm")
-c2.metric("Max Kesme", f"{np.max(np.abs(V)):.1f} kN")
-c3.metric("Eksenel Etki", f"{np.max(np.abs(N)):.1f} kN")
+c1.metric("Sol Mesnet (R1y)", f"{np.abs(V[0]):.2f} kN")
+c2.metric("Orta Mesnet (R2y)", f"{np.abs(V[np.abs(x-L1).argmin()+1] - V[np.abs(x-L1).argmin()-1]):.2f} kN")
+c3.metric("Sağ Mesnet (By)", f"{By:.2f} kN")
